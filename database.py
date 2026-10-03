@@ -397,6 +397,7 @@ three.answer_map = {"0":eight}
 four.answer_map = {"0":eight}
 five.answer_map = {"0":ten1, "1":ten2, "2":ten}
 six.answer_map = {"0":eight, "1":seven}
+seven.answer_map = {"0":"", "1":""}
 eight.answer_map = {"0":ten3, "1":ten4, "2":ten5}
 nine.answer_map = {"0":eight}
 ten.answer_map = {"0":eight}
@@ -471,3 +472,68 @@ seventy8.answer_map = {"0":eight}
 seventy9.answer_map = {"0":eight}
 eighty.answer_map = {"0":eight}
 trick.answer_map = {"0":seven}
+
+
+class NodeDatabase(object):
+    """registry of every question node: the persistence layer of the game.
+
+    Query results are cached for fast repeated reads. The cache is
+    invalidated whenever a node is (re)registered, so a query can never
+    return a stale result after the database has changed."""
+
+    def __init__(self):
+        self._nodes = {}
+        self._cache = {}
+
+    def register(self, idnum, node):
+        """store a node under a stable idnum and refresh cached queries"""
+        node.idnum = idnum
+        self._nodes[idnum] = node
+        self._cache.clear()
+        return node
+
+    def get(self, idnum):
+        return self._nodes[idnum]
+
+    def all_nodes(self):
+        """idnum -> node mapping of every registered node (cached)"""
+        if "all" not in self._cache:
+            self._cache["all"] = dict(self._nodes)
+        return self._cache["all"]
+
+    def reachable_from(self, start_idnum):
+        """set of idnums reachable by following answer_map edges from a
+        start node (cached)"""
+        cache_key = "reachable:%s" % start_idnum
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        seen = set()
+        stack = [self.get(start_idnum)]
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, GameNode) or node.idnum in seen:
+                continue
+            seen.add(node.idnum)
+            for target in node.answer_map.values():
+                if isinstance(target, GameNode) and target.idnum not in seen:
+                    stack.append(target)
+        self._cache[cache_key] = seen
+        return seen
+
+    def __contains__(self, idnum):
+        return idnum in self._nodes
+
+    def __len__(self):
+        return len(self._nodes)
+
+    def __iter__(self):
+        return iter(self._nodes)
+
+
+db = NodeDatabase()
+for _name in list(globals()):
+    _node = globals()[_name]
+    if isinstance(_node, GameNode):
+        db.register(_name, _node)
+del _name
+del _node

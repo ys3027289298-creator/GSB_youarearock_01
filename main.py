@@ -1,10 +1,8 @@
 import curses
-from database import *
+from database import opening, wrong, trick
 import questionnode
 import time
 import locale
-
-questionnode.state = opening
 
 
 def run(stdscr):
@@ -17,7 +15,8 @@ def run(stdscr):
         curses.init_pair(5, curses.COLOR_CYAN, curses.COLOR_BLACK)
         curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_BLACK)
     
-    next_node = questionnode.state.play(stdscr, wrong, trick)
+    session = questionnode.GameSession(opening, wrong, trick)
+    session.run(stdscr)
 
     time.sleep(5)
 

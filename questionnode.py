@@ -11,15 +11,18 @@ import os
 #rpg and command line tricks
 state = ""
 
-class GameNode(object):
-    #game node object, contains text and major behaviours
 
-    def __init__(self, query, options):
-        self.query = query
-        self.options = options
-        self.answer_map = {}
-        # self.tricks_dict = {}
-        # self.tricks_list = []
+def reset_state():
+    """reset the global game state so each session starts from a clean
+    state"""
+    global state
+    state = ""
+
+
+class TextRenderer(object):
+    #shared curses text rendering helpers, kept in their own layer so that
+    #non-node components (answer/trick handlers) can reuse them without
+    #masquerading as question nodes
 
     def text_wrapping(self, word, standardscreen):
         """simple textwrapper, check how much space is left on the x-axis  
@@ -89,19 +92,49 @@ class GameNode(object):
             standardscreen.addstr(word)
 
 
+class GameNode(TextRenderer):
+    #game node object, contains text and major behaviours
+
+    def __init__(self, query, options):
+        self.query = query
+        self.options = options
+        self.answer_map = {}
+        #stable identifier, assigned when the node is registered in the
+        #database layer
+        self.idnum = None
+        # self.tricks_dict = {}
+        # self.tricks_list = []
+
+    def __eq__(self, other):
+        #nodes compare equal to their own idnum (and to nodes sharing it),
+        #so map points can be validated against the database registry
+        if isinstance(other, GameNode):
+            other = other.idnum
+        return self.idnum is not None and self.idnum == other
+
+    def __hash__(self):
+        return hash(self.idnum)
+
+    def resolve(self, answer):
+        """pure transition lookup: returns the next node for a valid answer
+        and None for invalid input, so callers can re-prompt instead of
+        crashing"""
+        return self.answer_map.get(answer)
+
     def play(self, standardscreen, wrong, trick):
-        """main play function, gets user input and returns next node"""
-        global state
+        """main play function, gets user input and returns the next node.
+        Invalid answers and tricks are handled, then the player is
+        re-prompted -- the tree never loops on the same stale input"""
         answer = self.prompt_input(standardscreen)
-        while not answer in self.answer_map:
+        while answer not in self.answer_map:
             if answer.startswith(trick.tricks):
-                trick.play(standardscreen, wrong, trick, answer)
+                jump = trick.play(standardscreen, wrong, trick, answer)
+                if jump is not None:
+                    return jump
             else:
                 wrong.play(standardscreen, wrong, trick)
-                answer = self.prompt_input(standardscreen)
-        else:
-            state = self.answer_map[answer]
-            return self.answer_map[answer].play(standardscreen, wrong, trick)
+            answer = self.prompt_input(standardscreen)
+        return self.answer_map[answer]
 
     def prompt_input(self, standardscreen):
         """prints the query and options using pretty printing methods, and 
@@ -127,7 +160,6 @@ class NoAnswerNode(GameNode):
 
     def play(self, standardscreen, wrong, trick):
         """main play function displays text and returns next node"""
-        global state
         standardscreen.clear()
         standardscreen.addstr("\n")
         for i in self.query:
@@ -136,8 +168,7 @@ class NoAnswerNode(GameNode):
         answer = standardscreen.getch(
             standardscreen.getmaxyx()[0]-2,5)
         standardscreen.refresh()
-        state = self.answer_map["0"]
-        return self.answer_map["0"].play(standardscreen, wrong, trick)
+        return self.answer_map["0"]
 
 class GameEnd(GameNode):
     def play(self, standardscreen, wrong, trick):
@@ -158,10 +189,16 @@ class GameEnd(GameNode):
                     wrong.spasm(standardscreen)
 
 
-class WrongAnswerHandler(GameNode):
+class WrongAnswerHandler(TextRenderer):
     def __init__(self, errors, glitch):
         self.errors = errors
         self.glitch = glitch
+        self.wrong = 0
+        self.eternity = 0
+
+    def reset(self):
+        """restore the counters so a new session starts from a clean
+        state"""
         self.wrong = 0
         self.eternity = 0
 
@@ -236,7 +273,7 @@ class WrongAnswerHandler(GameNode):
                 standardscreen.refresh()
             time.sleep(.01)
 
-class TrickHandler(GameNode):
+class TrickHandler(TextRenderer):
     """There are two types of tricks - statements and funcs. Statements print a 
     response to the user, funcs contain some independent logic."""
 
@@ -253,14 +290,20 @@ class TrickHandler(GameNode):
     def play(self, standardscreen, wrong, trick, answer):
         """checks entered string against all possible trick keywords, using 
         startswith, and if a match is found, forwards it to the statement 
-        handler or calls the associated func"""
+        handler or calls the associated func. Returns a node to jump to, or
+        None to stay on the current node. Unknown input is ignored instead
+        of crashing."""
+        key = None
         for i in self.tricks:
             if answer.startswith(i):
                 key = i
+        if key is None:
+            return None
         if key in self.statements:
             self.statement_handler(standardscreen, wrong, trick, key)
+            return None
         else: 
-            self.funcs[key](standardscreen, wrong, trick, answer)
+            return self.funcs[key](standardscreen, wrong, trick, answer)
 
     def tuple_constructor(self):
         """creates a tuple of all the possible tricks, both funcs and 
@@ -270,14 +313,12 @@ class TrickHandler(GameNode):
         return tuple(all_tricks)
 
     def statement_handler(self, standardscreen, wrong, trick, answer):
-        """prints tricks, then pops player back to global game state"""
-        global state
+        """prints tricks, then pops player back to the current node"""
         standardscreen.clear()
         standardscreen.addstr("\n")
         self.pretty_printing(self.statements[answer], standardscreen)
         answer = standardscreen.getch(standardscreen.getmaxyx()[0]-2,5)
         standardscreen.refresh()
-        state.play(standardscreen, wrong, trick)
 
     def pwd(self, standardscreen, wrong, trick, answer):
         home = os.getcwd()
@@ -285,16 +326,15 @@ class TrickHandler(GameNode):
         standardscreen.addstr("\n     " + home)
         answer = standardscreen.getch(standardscreen.getmaxyx()[0]-2,5)
         standardscreen.refresh()
-        state.play(standardscreen, wrong, trick)
 
-    def sudo(self):
+    def sudo(self, standardscreen, wrong, trick, answer):
         lol = "You think you're clever but really you're a rock"
         standardscreen.clear()
         standardscreen.addstr("\n")
         self.pretty_printing(lol, standardscreen)
         answer = standardscreen.getch(standardscreen.getmaxyx()[0]-2,5)
         standardscreen.refresh()
-        self.answer_map["0"].play(standardscreen, wrong, trick)
+        return self.answer_map["0"]
 
     def ls(self, standardscreen, wrong, trick, answer):
         files = os.listdir(os.getcwd())
@@ -303,7 +343,6 @@ class TrickHandler(GameNode):
             standardscreen.addstr("\n     " + f)
         answer = standardscreen.getch(standardscreen.getmaxyx()[0]-2,5)
         standardscreen.refresh()
-        state.play(standardscreen, wrong, trick)
 
     def kill(self, standardscreen, wrong, trick, answer):
         kill = ("Maybe I underestimated you. You seem to have learned how" 
@@ -314,11 +353,11 @@ class TrickHandler(GameNode):
         self.pretty_printing(kill, standardscreen)
         answer = standardscreen.getch(standardscreen.getmaxyx()[0]-2,5)
         standardscreen.refresh()
-        self.answer_map["0"].play(standardscreen, wrong, trick)
+        return self.answer_map["0"]
 
     def logout(self, standardscreen, wrong, trick, answer):
         standardscreen.clear()
-        self.answer_map["0"].play(standardscreen, wrong, trick)
+        return self.answer_map["0"]
 
     def echo(self, standardscreen, wrong, trick, answer):
         reply = ("You call is echoed by the space around you, but it's "
@@ -331,7 +370,37 @@ class TrickHandler(GameNode):
         self.pretty_printing(reply, standardscreen)
         answer = standardscreen.getch(standardscreen.getmaxyx()[0]-2,5)
         standardscreen.refresh()
-        state.play(standardscreen, wrong, trick)
+        return None
 
+
+class GameSession(object):
+    """iterative driver for the choice tree.
+
+    The game used to recurse node.play() -> node.play(), which grew the
+    call stack on every choice and looped forever on trick input. The
+    session walks the tree in a loop instead, is the single writer of the
+    global state, and resets transient state so every session starts
+    clean."""
+
+    def __init__(self, start, wrong, trick):
+        self.start = start
+        self.wrong = wrong
+        self.trick = trick
+
+    def reset(self):
+        """bring every stateful component back to its starting state"""
+        reset_state()
+        self.wrong.reset()
+
+    def run(self, standardscreen):
+        """play from the start node until a terminal target (anything that
+        is not a GameNode, e.g. "") is reached"""
+        global state
+        self.reset()
+        node = self.start
+        while isinstance(node, GameNode):
+            state = node
+            node = node.play(standardscreen, self.wrong, self.trick)
+        return node
 
 
