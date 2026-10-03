@@ -15,4 +15,3 @@ setup_dict = dict(
 )
 
 setup(**setup_dict)
-setup(**setup_dict)

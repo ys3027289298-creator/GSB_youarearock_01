@@ -4,8 +4,6 @@ import questionnode
 import time
 import locale
 
-questionnode.state = opening
-
 
 def run(stdscr):
     curses.echo()
@@ -17,7 +15,8 @@ def run(stdscr):
         curses.init_pair(5, curses.COLOR_CYAN, curses.COLOR_BLACK)
         curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_BLACK)
     
-    next_node = questionnode.state.play(stdscr, wrong, trick)
+    questionnode.reset_session(wrong)
+    opening.play(stdscr, wrong, trick)
 
     time.sleep(5)
 
